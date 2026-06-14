@@ -10,6 +10,33 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stellar"]
+      interval: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://stellar:stellar@db:5432/stellar_receivables
+      NEXT_PUBLIC_NETWORK: testnet
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Local Soroban sandbox (Stellar Quickstart with Soroban RPC)
+  soroban:
+    image: stellar/quickstart:soroban-dev
+    ports:
+      - "8000:8000"   # Horizon
+      - "8080:8080"   # Soroban RPC
+    environment:
+      NETWORK: local
+    command: --local --enable-soroban-rpc
 
 volumes:
   pgdata:

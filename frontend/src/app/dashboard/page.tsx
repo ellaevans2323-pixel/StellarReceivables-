@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { getWallet, connectWallet } from '@/lib/stellar';
-import { createReceivable, fetchFarmerReceivables } from '@/lib/api';
+import { createReceivable, fetchFarmerReceivables, repayReceivable } from '@/lib/api';
 import StatusPill from '@/components/StatusPill';
 
 interface Receivable {
@@ -13,22 +13,24 @@ interface Receivable {
   discount_rate_bps: number;
   status: string;
   funded_amount: number | null;
+  farm_location: string | null;
+  risk_score: number | null;
 }
 
 const CROPS = ['Maize', 'Wheat', 'Rice', 'Sorghum', 'Cassava', 'Coffee', 'Cocoa', 'Cotton'];
 const INPUT = 'w-full px-3 py-2 rounded-lg bg-[#111a14] border border-[#1e3327] text-[#e8f5e9] text-sm focus:outline-none focus:border-[#16a34a]';
 const LABEL = 'block text-xs text-[#6b9e7c] mb-1';
-
 const EMPTY = {
   crop_type: 'Maize', estimated_yield_kg: '', estimated_value: '',
-  harvest_date: '', discount_rate_bps: '800', risk_score: '40', location: '',
+  harvest_date: '', discount_rate_bps: '800', risk_score: '40', farm_location: '',
 };
 
 export default function DashboardPage() {
-  const [wallet, setWallet]       = useState<string | null>(null);
-  const [receivables, setRows]    = useState<Receivable[]>([]);
-  const [form, setForm]           = useState(EMPTY);
-  const [loading, setLoading]     = useState(false);
+  const [wallet, setWallet]   = useState<string | null>(null);
+  const [rows, setRows]       = useState<Receivable[]>([]);
+  const [form, setForm]       = useState(EMPTY);
+  const [loading, setLoading] = useState(false);
+  const [repaying, setRepaying] = useState<string | null>(null);
 
   const load = useCallback(async (w: string) => {
     setRows((await fetchFarmerReceivables(w)) as Receivable[]);
@@ -58,9 +60,16 @@ export default function DashboardPage() {
       });
       await load(wallet);
       setForm(EMPTY);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
+  }
+
+  async function handleRepay(id: string) {
+    if (!wallet) return;
+    setRepaying(id);
+    try {
+      await repayReceivable(id, wallet);
+      await load(wallet);
+    } finally { setRepaying(null); }
   }
 
   if (!wallet) return (
@@ -77,7 +86,6 @@ export default function DashboardPage() {
     <div className="space-y-8">
       <h1 className="text-2xl font-bold">Farmer Dashboard</h1>
 
-      {/* Create Form */}
       <div className="p-6 rounded-xl bg-[#111a14] border border-[#1e3327]">
         <h2 className="font-semibold mb-4">Create New Receivable</h2>
         <form onSubmit={handleSubmit} className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -113,10 +121,10 @@ export default function DashboardPage() {
               onChange={e => setForm(f => ({ ...f, discount_rate_bps: e.target.value }))} />
           </div>
           <div>
-            <label className={LABEL}>Location</label>
+            <label className={LABEL}>Farm Location</label>
             <input className={INPUT} type="text" placeholder="e.g. Kenya, Rift Valley"
-              value={form.location}
-              onChange={e => setForm(f => ({ ...f, location: e.target.value }))} />
+              value={form.farm_location}
+              onChange={e => setForm(f => ({ ...f, farm_location: e.target.value }))} />
           </div>
           <div className="col-span-2 md:col-span-3 flex justify-end">
             <button type="submit" disabled={loading}
@@ -127,21 +135,20 @@ export default function DashboardPage() {
         </form>
       </div>
 
-      {/* Receivables Table */}
       <div className="rounded-xl border border-[#1e3327] overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-[#111a14] text-[#6b9e7c] text-xs uppercase">
             <tr>
-              {['Crop', 'Yield (kg)', 'Value (XLM)', 'Harvest Date', 'Rate', 'Status', 'Funded'].map(h => (
+              {['Crop', 'Yield (kg)', 'Value (XLM)', 'Harvest Date', 'Rate', 'Status', 'Funded', ''].map(h => (
                 <th key={h} className="px-4 py-3 text-left">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-[#1e3327]">
-            {receivables.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-[#6b9e7c]">No receivables yet</td></tr>
+            {rows.length === 0 && (
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-[#6b9e7c]">No receivables yet</td></tr>
             )}
-            {receivables.map(r => (
+            {rows.map(r => (
               <tr key={r.id} className="hover:bg-[#111a14]/50">
                 <td className="px-4 py-3 font-medium">{r.crop_type}</td>
                 <td className="px-4 py-3 mono">{r.estimated_yield_kg.toLocaleString()}</td>
@@ -150,6 +157,14 @@ export default function DashboardPage() {
                 <td className="px-4 py-3 mono">{r.discount_rate_bps / 100}%</td>
                 <td className="px-4 py-3"><StatusPill status={r.status} /></td>
                 <td className="px-4 py-3 mono">{r.funded_amount ? Number(r.funded_amount).toLocaleString() : '—'}</td>
+                <td className="px-4 py-3">
+                  {r.status === 'Funded' && (
+                    <button onClick={() => handleRepay(r.id)} disabled={repaying === r.id}
+                      className="px-3 py-1 rounded-lg bg-[#0f3d2e] border border-[#16a34a] text-xs hover:bg-[#16a34a]/20 transition-colors disabled:opacity-50">
+                      {repaying === r.id ? '…' : 'Repay'}
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

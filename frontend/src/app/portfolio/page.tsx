@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { getWallet, connectWallet } from '@/lib/stellar';
-import { fetchInvestorPositions } from '@/lib/api';
+import { fetchPortfolio } from '@/lib/api';
 import StatusPill from '@/components/StatusPill';
 import RiskBadge from '@/components/RiskBadge';
 
@@ -11,45 +11,51 @@ interface Position {
   crop_type: string;
   harvest_date: string;
   discount_rate_bps: number;
-  funded_amount: number;
+  invested_amount: number;
+  expected_return: number;
   status: string;
   risk_score: number;
-  location: string | null;
+  farm_location: string | null;
+  farmer_name: string;
+}
+
+interface Summary {
+  total_invested: number;
+  total_expected_return: number;
+  active_count: number;
+  repaid_count: number;
 }
 
 export default function PortfolioPage() {
-  const [wallet, setWallet]     = useState<string | null>(null);
-  const [positions, setPos]     = useState<Position[]>([]);
+  const [wallet, setWallet]   = useState<string | null>(null);
+  const [positions, setPos]   = useState<Position[]>([]);
+  const [summary, setSummary] = useState<Summary | null>(null);
 
   const load = useCallback(async (w: string) => {
-    setPos((await fetchInvestorPositions(w)) as Position[]);
+    const data = await fetchPortfolio(w) as { positions: Position[]; summary: Summary };
+    setPos(data.positions);
+    setSummary(data.summary);
   }, []);
 
   useEffect(() => {
     getWallet().then(w => { if (w) { setWallet(w); load(w); } });
   }, [load]);
 
-  const totalInvested = positions.reduce((s, p) => s + Number(p.funded_amount ?? 0), 0);
-  const avgYield = positions.length
-    ? (positions.reduce((s, p) => s + p.discount_rate_bps, 0) / positions.length / 100).toFixed(1)
-    : '0.0';
+  const kpis = summary ? [
+    { label: 'Total Invested',    value: `${Number(summary.total_invested).toLocaleString()} XLM` },
+    { label: 'Expected Returns',  value: `${Number(summary.total_expected_return).toLocaleString(undefined, { maximumFractionDigits: 2 })} XLM` },
+    { label: 'Active Positions',  value: String(summary.active_count) },
+    { label: 'Repaid',            value: String(summary.repaid_count) },
+  ] : [];
 
-  const kpis = [
-    { label: 'Total Invested',   value: `${totalInvested.toLocaleString()} XLM` },
-    { label: 'Active Positions', value: String(positions.filter(p => p.status === 'Funded').length) },
-    { label: 'Repaid',           value: String(positions.filter(p => p.status === 'Repaid').length) },
-    { label: 'Avg Yield',        value: `${avgYield}%` },
-  ];
-
-  // cumulative expected returns timeline
   const chartData = [
     { date: 'Now', value: 0 },
     ...positions
-      .filter(p => p.funded_amount)
+      .filter(p => p.invested_amount)
       .sort((a, b) => new Date(a.harvest_date).getTime() - new Date(b.harvest_date).getTime())
       .reduce<{ date: string; value: number }[]>((acc, p) => {
         const prev = acc[acc.length - 1].value;
-        const gain = Number(p.funded_amount) * p.discount_rate_bps / 10_000;
+        const gain = Number(p.invested_amount) * p.discount_rate_bps / 10_000;
         acc.push({
           date: new Date(p.harvest_date).toLocaleDateString('en', { month: 'short', year: '2-digit' }),
           value: +(prev + gain).toFixed(2),
@@ -113,21 +119,22 @@ export default function PortfolioPage() {
         <table className="w-full text-sm">
           <thead className="bg-[#111a14] text-[#6b9e7c] text-xs uppercase">
             <tr>
-              {['Crop', 'Location', 'Invested (XLM)', 'Yield', 'Harvest Date', 'Status', 'Risk'].map(h => (
+              {['Crop', 'Farmer', 'Location', 'Invested (XLM)', 'Expected Return', 'Harvest', 'Status', 'Risk'].map(h => (
                 <th key={h} className="px-4 py-3 text-left">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-[#1e3327]">
             {positions.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-[#6b9e7c]">No positions yet</td></tr>
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-[#6b9e7c]">No positions yet</td></tr>
             )}
             {positions.map(p => (
               <tr key={p.id} className="hover:bg-[#111a14]/50">
                 <td className="px-4 py-3 font-medium">{p.crop_type}</td>
-                <td className="px-4 py-3 text-[#6b9e7c]">{p.location ?? '—'}</td>
-                <td className="px-4 py-3 mono">{Number(p.funded_amount).toLocaleString()}</td>
-                <td className="px-4 py-3 mono text-[#f59e0b]">{(p.discount_rate_bps / 100).toFixed(1)}%</td>
+                <td className="px-4 py-3 text-[#6b9e7c]">{p.farmer_name}</td>
+                <td className="px-4 py-3 text-[#6b9e7c]">{p.farm_location ?? '—'}</td>
+                <td className="px-4 py-3 mono">{Number(p.invested_amount).toLocaleString()}</td>
+                <td className="px-4 py-3 mono text-[#f59e0b]">{Number(p.expected_return).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                 <td className="px-4 py-3">{new Date(p.harvest_date).toLocaleDateString()}</td>
                 <td className="px-4 py-3"><StatusPill status={p.status} /></td>
                 <td className="px-4 py-3"><RiskBadge score={p.risk_score ?? 50} /></td>
